@@ -74,6 +74,10 @@
     <button id='linkButton'>Open Link - Institution Select</button>
   </div>
 
+  <div id="diag" style="margin-top:1em;padding:0.5em;border:1px solid #ccc;font-family:monospace;font-size:12px;white-space:pre-wrap">
+    <strong>Plaid Link event log (diagnostic):</strong>
+  </div>
+
   <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
   <script>
     var linkHandler = Plaid.create({
@@ -94,10 +98,25 @@
         });
         // console.log('public_token: ' + public_token + ', metadata: ' + JSON.stringify(metadata));
       },
-      onExit: function (err, metadata) {
-        if (err != null) {
-          // The user encountered a Plaid API error prior to exiting.
+      onEvent: function (eventName, metadata) {
+        var d = document.getElementById('diag');
+        if (d) {
+          var line = document.createElement('div');
+          line.textContent = eventName + ': ' + JSON.stringify(metadata);
+          d.appendChild(line);
         }
+        console.log('PLAID EVENT', eventName, metadata);
+      },
+      onExit: function (err, metadata) {
+        var d = document.getElementById('diag');
+        if (d) {
+          var line = document.createElement('div');
+          line.style.color = 'red';
+          line.style.fontWeight = 'bold';
+          line.textContent = 'EXIT err=' + JSON.stringify(err) + '  metadata=' + JSON.stringify(metadata);
+          d.appendChild(line);
+        }
+        console.log('PLAID EXIT', err, metadata);
       }
     });
 
