@@ -19,6 +19,7 @@ from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUse
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
 from plaid.model.transactions_sync_request import TransactionsSyncRequest
 from plaid.model.sandbox_item_reset_login_request import SandboxItemResetLoginRequest
+from plaid.model.link_token_transactions import LinkTokenTransactions
 
 
 class AccountBalance:
@@ -167,6 +168,10 @@ class PlaidAPI:
             req_data["access_token"] = access_token
         else:
             req_data["products"] = [Products("transactions")]
+            # Request the maximum 24 months of history (Plaid default is 90 days).
+            # days_requested is fixed at link time and CANNOT be extended on an
+            # existing Item — the only way to get more is to delete + re-link it.
+            req_data["transactions"] = LinkTokenTransactions(days_requested=730)
 
         req = LinkTokenCreateRequest(**req_data)
         response = self.client.link_token_create(req)

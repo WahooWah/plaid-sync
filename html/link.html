@@ -2,7 +2,8 @@
 
 <head>
   <title class="macros">plaid-sync: {{title}}</title>
-  <link rel="stylesheet" href="https://unpkg.com/sakura.css/css/sakura.css" type="text/css">
+  <!-- SecOps 2026-07-15: removed external unpkg.com sakura.css stylesheet — no third-party CDN
+       requests during the linking flow. Page is functional without cosmetic styling. -->
   <script>
     var config = {{CONFIG_JSON}};
   </script>
