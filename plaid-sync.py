@@ -43,7 +43,9 @@ def parse_options():
         "--balances",
         dest="balances",
         action="store_true",
-        help="If true, updated balance information (slow) is loaded. Defaults to false.",
+        help="*** BILLED ($0.10/call) *** Force a REAL-TIME balance pull via the Balance "
+        "product (/accounts/balance/get). Rarely needed: cursor sync already stores FREE "
+        "cached balances (~1-2 days fresh) via /accounts/get on every run. Defaults to false.",
     )
     parser.add_argument(
         "-s",
@@ -75,6 +77,13 @@ def parse_options():
         "--link-account",
         dest="link_account",
         help="Run with this option to set up an entirely new account through Plaid.",
+    )
+    parser.add_argument(
+        "--select-accounts",
+        dest="select_accounts",
+        help="Re-open the account picker for an already-linked account (update mode + "
+        "Account Select) so individual accounts can be added or removed. De-selected "
+        "accounts stop being billed. NOTE: Chase does not support removal this way.",
     )
     args = parser.parse_args()
 
@@ -155,10 +164,17 @@ class PlaidSynchronizer:
                 print("    Fetching item (bank login) info")
             self.item_info = self.plaid.get_item_info(self.access_token)
 
-            balances = None
+            # Always fetch account metadata + cached balances: /accounts/get is FREE and
+            # is the only way we learn account names, masks, types and balances (needed
+            # for net worth). fetch_balances (-b) additionally forces a BILLED real-time
+            # pull, overriding the free cached values below.
+            if verbose:
+                print("     Fetching accounts + cached balances (free)")
+            balances = self.plaid.get_accounts(self.access_token)
+
             if fetch_balances:
                 if verbose:
-                    print("     Fetching current balances")
+                    print("     Fetching REAL-TIME balances (BILLED $0.10/call)")
                 balances = self.plaid.get_account_balance(self.access_token)
 
             last_cursor = self.db.get_last_sync_cursor(self.item_info.item_id)
@@ -175,8 +191,10 @@ class PlaidSynchronizer:
                 access_token=self.access_token,
                 cursor=last_cursor,
                 status_callback=(
+                    # sync_transactions passes running COUNTS (ints), not lists —
+                    # calling len() on them raised TypeError under --verbose.
                     lambda added, modified, removed, has_next: print(
-                        f"        {len(added)} added, {len(modified)} modified, {len(removed)} removed (more: {has_next})"
+                        f"        {added} added, {modified} modified, {removed} removed (more: {has_next})"
                     )
                 )
                 if verbose
@@ -367,6 +385,52 @@ def try_get_tqdm():
         return None
 
 
+def select_accounts(cfg: config.Config, plaid: plaidapi.PlaidAPI, account_name: str):
+    """
+    Re-open Plaid Link in update mode with Account Select enabled, so the user can
+    add or remove individual accounts on an existing Item without re-linking it.
+    Removing an account stops its $0.30/month subscription charge.
+    """
+    if account_name not in cfg.get_enabled_accounts():
+        print("Unknown account name [%s]." % account_name, file=sys.stderr)
+        print("Configured accounts: ", file=sys.stderr)
+        for account in cfg.get_enabled_accounts():
+            print("    %s" % account, file=sys.stderr)
+        sys.exit(1)
+
+    print("Re-opening account selection for [%s]" % account_name)
+    print("Un-check any accounts you no longer want connected (or billed).")
+    print("NOTE: Chase does not support removing accounts here — use the Chase")
+    print("      online Security Center instead.")
+    print("")
+
+    link_token = plaid.get_link_token(
+        access_token=cfg.get_account_access_token(account_name),
+        account_selection=True,
+    )
+
+    import webserver
+
+    plaid_response = webserver.serve(
+        env=cfg.environment,
+        clientName="plaid-sync",
+        pageTitle="Select Accounts",
+        type="update",
+        accountName=account_name,
+        token=link_token,
+    )
+
+    if "public_token" not in plaid_response:
+        print("No public token returned — account selection may not have completed.")
+        print("This is safe to retry; the existing link is not lost.")
+        sys.exit(1)
+
+    print("")
+    print("Account selection saved. The existing access token still works —")
+    print("re-run a normal sync to confirm the new account list.")
+    sys.exit(0)
+
+
 def update_account(cfg: config.Config, plaid: plaidapi.PlaidAPI, account_name: str):
     try:
         print("Starting account update process for [%s]" % account_name)
@@ -501,6 +565,10 @@ def main():
 
     if args.update_account:
         update_account(cfg, plaid, args.update_account)
+        return
+
+    if args.select_accounts:
+        select_accounts(cfg, plaid, args.select_accounts)
         return
 
     if args.link_account:

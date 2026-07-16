@@ -14,12 +14,14 @@ from plaid.model.item_get_request import ItemGetRequest
 from plaid.model.country_code import CountryCode
 from plaid.model.products import Products
 from plaid.model.accounts_balance_get_request import AccountsBalanceGetRequest
+from plaid.model.accounts_get_request import AccountsGetRequest
 from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
 from plaid.model.transactions_sync_request import TransactionsSyncRequest
 from plaid.model.sandbox_item_reset_login_request import SandboxItemResetLoginRequest
 from plaid.model.link_token_transactions import LinkTokenTransactions
+from plaid.model.link_token_create_request_update import LinkTokenCreateRequestUpdate
 
 
 class AccountBalance:
@@ -142,7 +144,9 @@ class PlaidAPI:
         self.client = plaid_api.PlaidApi(api_client)
 
     @wrap_plaid_error
-    def get_link_token(self, access_token=None, user_id="user") -> str:
+    def get_link_token(
+        self, access_token=None, user_id="user", account_selection=False
+    ) -> str:
         """
         Calls the /link/token/create workflow, which returns an access token
         which can be used to initate the account linking process or, if an access_token
@@ -166,6 +170,16 @@ class PlaidAPI:
         # if updating an existing account, the products field is not allowed
         if access_token:
             req_data["access_token"] = access_token
+            if account_selection:
+                # Update mode + Account Select: re-opens the account picker so accounts
+                # can be ADDED or REMOVED from an existing Item without re-linking.
+                # De-selected accounts stop being shared -> stop being billed
+                # ($0.30/connected account/month on our contract).
+                # NOTE: Chase does NOT support removal this way — for a Chase Item the
+                # account must be removed via the online Chase Security Center.
+                req_data["update"] = LinkTokenCreateRequestUpdate(
+                    account_selection_enabled=True
+                )
         else:
             req_data["products"] = [Products("transactions")]
             # Request the maximum 24 months of history (Plaid default is 90 days).
@@ -211,9 +225,38 @@ class PlaidAPI:
         return AccountInfo(resp.to_dict())
 
     @wrap_plaid_error
+    def get_accounts(self, access_token: str) -> List[AccountBalance]:
+        """
+        Returns account metadata + CACHED balances for all accounts on this Item.
+
+        *** THIS IS THE FREE ENDPOINT — PREFER IT. ***
+
+        /accounts/get is not associated with a billed product, so it costs $0.
+        It returns cached balances rather than forcing a live pull from the bank.
+        For Items initialized with a subscription product (ours carry Transactions),
+        Plaid keeps that cache fresh to within ~1-2 days, which is plenty for net
+        worth tracking. Items WITHOUT a subscription product can go stale 90+ days.
+
+        Contrast with get_account_balance() below, which hits /accounts/balance/get
+        — the Balance product, billed per call ($0.10/call on our contract).
+
+        Response shape is identical to /accounts/balance/get, so AccountBalance
+        parses it unchanged.
+        """
+        req = AccountsGetRequest(access_token=access_token)
+        resp = self.client.accounts_get(req)
+        return list(map(AccountBalance, resp.to_dict()["accounts"]))
+
+    @wrap_plaid_error
     def get_account_balance(self, access_token: str) -> List[AccountBalance]:
         """
-        Returns the balances of all accounts associated with this particular access_token.
+        Returns REAL-TIME balances of all accounts associated with this access_token.
+
+        *** BILLED: $0.10 per successful call (Balance product). ***
+
+        This forces a live request to the financial institution. Only use it when
+        a ~1-2 day old cached balance genuinely isn't good enough. For net worth
+        tracking it isn't necessary — use get_accounts() instead.
         """
         req = AccountsBalanceGetRequest(access_token=access_token)
         resp = self.client.accounts_balance_get(req)
