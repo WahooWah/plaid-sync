@@ -3,3 +3,7 @@ __pycache__/
 config/*.ini
 config/*.bkp
 *.db
+# Runtime data — NEVER commit (brokerage staging holds plaintext tokens)
+brokerage_tokens_staging.json
+link_events.log
+price_cache.json
