@@ -7,3 +7,4 @@ config/*.bkp
 brokerage_tokens_staging.json
 link_events.log
 price_cache.json
+home_values.json
